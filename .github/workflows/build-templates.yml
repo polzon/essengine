@@ -51,7 +51,7 @@ jobs:
           tag=""
           while read -r sha ref; do
             ref=${ref#refs/tags/}
-            ref=${ref%^{}}
+            ref=${ref%'^{}'}
             if [ "$sha" = "$commit" ] && [ -z "$tag" ]; then
               tag=$ref
             fi
