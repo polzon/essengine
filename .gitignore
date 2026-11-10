@@ -1,5 +1,6 @@
 dist/
 release/
 tpz/
+.scons_cache/
 manifest.json
 templates-*.tpz

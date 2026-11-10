@@ -1,0 +1,24 @@
+FROM fedora:44
+
+WORKDIR /root
+
+ENV GODOT_SDK_VERSION=godot-2026.05.x-1
+
+RUN dnf -y install --setopt=install_weak_deps=False \
+      bash binutils bzip2 curl file findutils gettext git jq make nano \
+      patch pkgconfig python3-pip tar unzip which xz zip zstd && \
+    pip install scons==4.10.1 && \
+    dnf clean all
+
+RUN dnf install -y wayland-devel && dnf clean all
+
+RUN set -eux; \
+    for arch in x86_64 aarch64; do \
+      name="${arch}-godot-linux-gnu_sdk-buildroot"; \
+      curl -fLO "https://github.com/godotengine/buildroot/releases/download/${GODOT_SDK_VERSION}/${name}.tar.bz2"; \
+      tar xf "${name}.tar.bz2"; \
+      rm -f "${name}.tar.bz2"; \
+      (cd "${name}" && ./relocate-sdk.sh); \
+    done
+
+CMD ["/bin/bash"]

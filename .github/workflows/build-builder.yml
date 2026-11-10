@@ -1,0 +1,63 @@
+name: Build builder images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - builder/**
+      - .github/workflows/build-builder.yml
+  workflow_dispatch:
+
+concurrency:
+  group: build-builder-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: builder-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push
+        run: |
+          image="ghcr.io/${{ github.repository_owner }}/essengine-builder-linux:main"
+          docker build --progress=plain -f builder/Dockerfile.linux -t "$image" .
+          docker push "$image"
+
+  windows:
+    name: builder-windows
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push
+        run: |
+          image="ghcr.io/${{ github.repository_owner }}/essengine-builder-windows:main"
+          docker build --progress=plain -f builder/Dockerfile.windows -t "$image" .
+          docker push "$image"

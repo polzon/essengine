@@ -1,0 +1,22 @@
+FROM fedora:44
+
+WORKDIR /root
+
+ENV LLVM_MINGW_VERSION=20260616
+
+RUN dnf -y install --setopt=install_weak_deps=False \
+      bash binutils bzip2 curl file findutils gettext git jq make nano \
+      patch pkgconfig python3-pip tar unzip which xz zip zstd \
+      mingw32-gcc mingw32-gcc-c++ mingw32-winpthreads-static \
+      mingw64-gcc mingw64-gcc-c++ mingw64-winpthreads-static && \
+    pip install scons==4.10.1 && \
+    dnf clean all
+
+RUN set -eux; \
+    name="llvm-mingw-${LLVM_MINGW_VERSION}-ucrt-ubuntu-22.04-x86_64"; \
+    curl -fLO "https://github.com/mstorsjo/llvm-mingw/releases/download/${LLVM_MINGW_VERSION}/${name}.tar.xz"; \
+    tar xf "${name}.tar.xz"; \
+    rm -f "${name}.tar.xz"; \
+    mv -f "${name}" /root/llvm-mingw
+
+CMD ["/bin/bash"]
