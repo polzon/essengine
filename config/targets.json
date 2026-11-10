@@ -1,0 +1,16 @@
+{
+  "common_args": "target=template_release production=yes",
+  "targets": [
+    {
+      "name": "linux-x86_64",
+      "runner": "ubuntu-22.04",
+      "platform": "linuxbsd",
+      "arch": "x86_64",
+      "profile": "",
+      "args": "",
+      "outputs": {
+        "godot.linuxbsd.template_release.x86_64": "linux_release.x86_64"
+      }
+    }
+  ]
+}

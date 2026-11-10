@@ -1,0 +1,5 @@
+dist/
+release/
+tpz/
+manifest.json
+templates-*.tpz

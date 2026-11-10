@@ -1,0 +1,276 @@
+name: Build export templates
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - godot
+      - profiles/**
+      - modules/**
+      - patches/**
+      - config/**
+      - .github/workflows/build-templates.yml
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: Also build debug templates
+        type: boolean
+        default: false
+
+concurrency:
+  group: build-templates-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    name: Plan
+    runs-on: ubuntu-24.04
+    outputs:
+      targets: ${{ steps.config.outputs.targets }}
+      common_args: ${{ steps.config.outputs.common_args }}
+      godot_tag: ${{ steps.engine.outputs.tag }}
+      godot_commit: ${{ steps.engine.outputs.commit }}
+      version_string: ${{ steps.engine.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Resolve pinned engine version
+        id: engine
+        shell: bash
+        run: |
+          set -euo pipefail
+          commit=$(git ls-tree HEAD godot | awk '{print $3}')
+          if [ -z "$commit" ]; then
+            echo "::error::The godot/ submodule is missing from this commit."
+            exit 1
+          fi
+          tag=""
+          while read -r sha ref; do
+            ref=${ref#refs/tags/}
+            ref=${ref%^{}}
+            if [ "$sha" = "$commit" ] && [ -z "$tag" ]; then
+              tag=$ref
+            fi
+          done < <(git ls-remote --tags https://github.com/godotengine/godot.git)
+          if [ -z "$tag" ]; then
+            echo "::error::godot/ is at $commit, which is not an upstream tag."
+            exit 1
+          fi
+          case "$tag" in
+            *-stable) ;;
+            *)
+              echo "::error::godot/ is tagged $tag, not a *-stable tag."
+              exit 1
+              ;;
+          esac
+          version="${tag%-*}.${tag##*-}"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Read target matrix
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          jq -e '.targets | type == "array" and length > 0' config/targets.json > /dev/null
+          echo "targets=$(jq -c '.targets' config/targets.json)" >> "$GITHUB_OUTPUT"
+          echo "common_args=$(jq -r '.common_args // empty' config/targets.json)" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target.name }}
+    needs: plan
+    runs-on: ${{ matrix.target.runner }}
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJSON(needs.plan.outputs.targets) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          submodules: recursive
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            libx11-dev libxcursor-dev libxinerama-dev libxi-dev \
+            libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev \
+            libasound2-dev libpulse-dev libudev-dev libfontconfig1-dev \
+            libwayland-bin libwayland-dev yasm
+
+      - name: Install SCons
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m pip install --user "scons==4.10.1"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/scons" --version
+
+      - name: Apply patches
+        shell: bash
+        run: |
+          set -euo pipefail
+          for patch in patches/*.patch; do
+            [ -e "$patch" ] || continue
+            git -C godot apply "$GITHUB_WORKSPACE/$patch"
+          done
+
+      - name: Build and stage templates
+        shell: bash
+        env:
+          TARGET_JSON: ${{ toJSON(matrix.target) }}
+          COMMON_ARGS: ${{ needs.plan.outputs.common_args }}
+          PLATFORM: ${{ matrix.target.platform }}
+          ARCH: ${{ matrix.target.arch }}
+          PROFILE: ${{ matrix.target.profile }}
+          EXTRA_ARGS: ${{ matrix.target.args }}
+          DEBUG: ${{ inputs.debug == true }}
+        run: |
+          set -euo pipefail
+          args=()
+          if [ -n "${COMMON_ARGS:-}" ]; then
+            read -r -a common <<< "$COMMON_ARGS"
+            args+=("${common[@]}")
+          fi
+          args+=("platform=$PLATFORM" "arch=$ARCH")
+          if [ -n "${PROFILE:-}" ]; then
+            args+=("build_profile=../profiles/$PROFILE")
+          fi
+          if find modules -mindepth 1 -maxdepth 1 -type d | grep -q .; then
+            args+=("custom_modules=../modules")
+          fi
+          if [ -n "${EXTRA_ARGS:-}" ]; then
+            read -r -a extra <<< "$EXTRA_ARGS"
+            args+=("${extra[@]}")
+          fi
+
+          (cd godot && scons "${args[@]}")
+
+          mkdir -p dist
+          printf '%s\n' "${args[*]}" > dist/build-args.txt
+
+          while IFS=$'\t' read -r source name; do
+            cp "godot/bin/$source" "dist/$name"
+          done < <(jq -r '.outputs | to_entries[] | "\(.key)\t\(.value)"' <<< "$TARGET_JSON")
+
+          if [ "${DEBUG:-false}" = "true" ]; then
+            debug_args=("${args[@]}")
+            for i in "${!debug_args[@]}"; do
+              if [ "${debug_args[$i]}" = "target=template_release" ]; then
+                debug_args[$i]="target=template_debug"
+              fi
+            done
+            (cd godot && scons "${debug_args[@]}")
+            while IFS=$'\t' read -r source name; do
+              debug_source=${source/template_release/template_debug}
+              debug_name=${name/release/debug}
+              cp "godot/bin/$debug_source" "dist/$debug_name"
+            done < <(jq -r '.outputs | to_entries[] | "\(.key)\t\(.value)"' <<< "$TARGET_JSON")
+          fi
+
+      - name: Upload templates
+        uses: actions/upload-artifact@v7
+        with:
+          name: templates-${{ matrix.target.name }}
+          path: dist/
+          retention-days: 1
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: [plan, build]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download templates
+        uses: actions/download-artifact@v8
+        with:
+          pattern: templates-*
+          path: release
+
+      - name: Build manifest and template package
+        shell: bash
+        env:
+          GODOT_TAG: ${{ needs.plan.outputs.godot_tag }}
+          GODOT_COMMIT: ${{ needs.plan.outputs.godot_commit }}
+          VERSION_STRING: ${{ needs.plan.outputs.version_string }}
+          ENGINE_COMMIT: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          rm -f release/*/build-args.txt
+
+          profiles='{}'
+          shopt -s nullglob
+          profile_files=(profiles/*.build)
+          if [ ${#profile_files[@]} -gt 0 ]; then
+            profiles=$(for f in "${profile_files[@]}"; do
+              printf '%s\t%s\n' "$(basename "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
+            done | jq -Rn '[inputs | split("\t") | {(.[0]): .[1]}] | add // {}')
+          fi
+
+          targets='{}'
+          for dir in release/templates-*; do
+            target=${dir#release/templates-}
+            args=$(cat "$dir/build-args.txt")
+            files=$(for f in "$dir"/*; do
+              printf '%s\t%s\n' "$(basename "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
+            done | jq -Rn '[inputs | split("\t") | {(.[0]): .[1]}] | add // {}')
+            targets=$(jq -n \
+              --argjson acc "$targets" \
+              --arg name "$target" \
+              --arg args "$args" \
+              --argjson files "$files" \
+              '$acc + {($name): {args: $args, files: $files}}')
+          done
+
+          jq -n \
+            --arg godot_tag "$GODOT_TAG" \
+            --arg godot_commit "$GODOT_COMMIT" \
+            --arg version_string "$VERSION_STRING" \
+            --arg engine_repo_commit "$ENGINE_COMMIT" \
+            --argjson profiles "$profiles" \
+            --argjson targets "$targets" \
+            '{
+              godot_tag: $godot_tag,
+              godot_commit: $godot_commit,
+              version_string: $version_string,
+              engine_repo_commit: $engine_repo_commit,
+              profiles: $profiles,
+              targets: $targets
+            }' > manifest.json
+
+          mkdir -p tpz
+          find release -type f -exec cp {} tpz/ \;
+          printf '%s\n' "$VERSION_STRING" > tpz/version.txt
+          (cd tpz && zip -q -9 "../templates-${GODOT_TAG}.tpz" *)
+
+      - name: Create release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GODOT_TAG: ${{ needs.plan.outputs.godot_tag }}
+        run: |
+          set -euo pipefail
+          short=$(git rev-parse --short=7 HEAD)
+          tag="${GODOT_TAG}-${short}"
+          mapfile -t assets < <(find release -type f)
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "$tag" \
+            --notes "Export templates built from godot ${GODOT_TAG} at ${GITHUB_SHA}." \
+            manifest.json "templates-${GODOT_TAG}.tpz" "${assets[@]}"
