@@ -62,6 +62,19 @@
       "outputs": {
         "godot.web.template_release.wasm32.nothreads.dlink.zip": "web_dlink_nothreads_release.zip"
       }
+    },
+    {
+      "name": "android",
+      "runner": "ubuntu-24.04",
+      "container": "ghcr.io/polzon/essengine-builder-android:main",
+      "platform": "android",
+      "arch": "",
+      "profile": "",
+      "args": "",
+      "outputs": {
+        "android_release.apk": "android_release.apk",
+        "android_source.zip": "android_source.zip"
+      }
     }
   ]
 }

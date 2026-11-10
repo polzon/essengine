@@ -177,13 +177,14 @@ jobs:
             set -u
           fi
 
-          (cd godot && python3 -m SCons "${args[@]}")
-
-          mkdir -p dist
-
-          while IFS=$'\t' read -r source name; do
-            cp "godot/bin/$source" "dist/$name"
-          done < <(jq -r '.outputs | to_entries[] | "\(.key)\t\(.value)"' <<< "$TARGET_JSON" | tr -d '\r')
+          if [ "$PLATFORM" = "android" ]; then
+            (cd godot && python3 misc/scripts/install_swappy_android.py)
+            for android_arch in arm32 arm64 x86_32 x86_64; do
+              (cd godot && python3 -m SCons "${args[@]}" "arch=$android_arch")
+            done
+          else
+            (cd godot && python3 -m SCons "${args[@]}")
+          fi
 
           if [ "${DEBUG:-false}" = "true" ]; then
             debug_args=("${args[@]}")
@@ -192,19 +193,43 @@ jobs:
                 debug_args[$i]="target=template_debug"
               fi
             done
-            (cd godot && python3 -m SCons "${debug_args[@]}")
+            if [ "$PLATFORM" = "android" ]; then
+              for android_arch in arm32 arm64 x86_32 x86_64; do
+                (cd godot && python3 -m SCons "${debug_args[@]}" "arch=$android_arch")
+              done
+            else
+              (cd godot && python3 -m SCons "${debug_args[@]}")
+            fi
+          fi
+
+          if [ "$PLATFORM" = "android" ]; then
+            (cd godot/platform/android/java && ./gradlew --no-daemon generateGodotTemplates)
+          fi
+
+          mkdir -p dist
+
+          while IFS=$'\t' read -r source name; do
+            cp "godot/bin/$source" "dist/$name"
+          done < <(jq -r '.outputs | to_entries[] | "\(.key)\t\(.value)"' <<< "$TARGET_JSON" | tr -d '\r')
+
+          if [ "${DEBUG:-false}" = "true" ]; then
             while IFS=$'\t' read -r source name; do
               debug_source=${source/template_release/template_debug}
               debug_source=${debug_source/_release/_debug}
               debug_name=${name/release/debug}
+              [ -f "godot/bin/$debug_source" ] || continue
               cp "godot/bin/$debug_source" "dist/$debug_name"
             done < <(jq -r '.outputs | to_entries[] | "\(.key)\t\(.value)"' <<< "$TARGET_JSON" | tr -d '\r')
           fi
 
           files=$(cd dist && ls -1 | tr -d '\r' | jq -Rn '[inputs]')
+          recorded_args="${args[*]}"
+          if [ "$PLATFORM" = "android" ]; then
+            recorded_args="$recorded_args arch=arm32 arch=arm64 arch=x86_32 arch=x86_64"
+          fi
           jq -n \
             --arg name "$TARGET_NAME" \
-            --arg args "${args[*]}" \
+            --arg args "$recorded_args" \
             --argjson files "$files" \
             '{name: $name, args: $args, files: $files}' \
             > "dist/$TARGET_NAME.target.json"
