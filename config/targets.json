@@ -11,6 +11,41 @@
       "outputs": {
         "godot.linuxbsd.template_release.x86_64": "linux_release.x86_64"
       }
+    },
+    {
+      "name": "linux-arm64",
+      "runner": "ubuntu-24.04-arm",
+      "platform": "linuxbsd",
+      "arch": "arm64",
+      "profile": "",
+      "args": "",
+      "outputs": {
+        "godot.linuxbsd.template_release.arm64": "linux_release.arm64"
+      }
+    },
+    {
+      "name": "windows-x86_64",
+      "runner": "windows-2025",
+      "platform": "windows",
+      "arch": "x86_64",
+      "profile": "",
+      "args": "",
+      "outputs": {
+        "godot.windows.template_release.x86_64.exe": "windows_release_x86_64.exe",
+        "godot.windows.template_release.x86_64.console.exe": "windows_release_x86_64_console.exe"
+      }
+    },
+    {
+      "name": "windows-arm64",
+      "runner": "windows-2025",
+      "platform": "windows",
+      "arch": "arm64",
+      "profile": "",
+      "args": "",
+      "outputs": {
+        "godot.windows.template_release.arm64.exe": "windows_release_arm64.exe",
+        "godot.windows.template_release.arm64.console.exe": "windows_release_arm64_console.exe"
+      }
     }
   ]
 }

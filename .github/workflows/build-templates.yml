@@ -103,19 +103,48 @@ jobs:
           set -euo pipefail
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config \
+            build-essential pkg-config python3-pip \
             libx11-dev libxcursor-dev libxinerama-dev libxi-dev \
             libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev \
             libasound2-dev libpulse-dev libudev-dev libfontconfig1-dev \
-            libwayland-bin libwayland-dev yasm
+            libwayland-bin libwayland-dev
+
+      - name: Install Windows build dependencies
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          d3d12=no
+          angle=no
+          accesskit=no
+          if (cd godot && python misc/scripts/install_d3d12_sdk_windows.py); then
+            d3d12=yes
+          fi
+          if (cd godot && python misc/scripts/install_angle.py); then
+            angle=yes
+          fi
+          if (cd godot && python misc/scripts/install_accesskit.py); then
+            accesskit=yes
+          fi
+          (cd godot && python misc/scripts/install_winrt.py) || true
+          {
+            echo "GODOT_D3D12=$d3d12"
+            echo "GODOT_ANGLE=$angle"
+            echo "GODOT_ACCESSKIT=$accesskit"
+          } >> "$GITHUB_ENV"
 
       - name: Install SCons
         shell: bash
         run: |
           set -euo pipefail
-          python3 -m pip install --user "scons==4.10.1"
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-          "$HOME/.local/bin/scons" --version
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            python=python
+          else
+            python=python3
+          fi
+          echo "PYTHON=$python" >> "$GITHUB_ENV"
+          "$python" -m pip install --user "scons==4.10.1"
+          "$python" -m SCons --version
 
       - name: Apply patches
         shell: bash
@@ -123,7 +152,7 @@ jobs:
           set -euo pipefail
           for patch in patches/*.patch; do
             [ -e "$patch" ] || continue
-            git -C godot apply "$GITHUB_WORKSPACE/$patch"
+            git -C godot apply "../$patch"
           done
 
       - name: Build and stage templates
@@ -155,8 +184,15 @@ jobs:
             read -r -a extra <<< "$EXTRA_ARGS"
             args+=("${extra[@]}")
           fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            args+=(
+              "d3d12=${GODOT_D3D12:-no}"
+              "angle=${GODOT_ANGLE:-no}"
+              "accesskit=${GODOT_ACCESSKIT:-no}"
+            )
+          fi
 
-          (cd godot && scons "${args[@]}")
+          (cd godot && "$PYTHON" -m SCons "${args[@]}")
 
           mkdir -p dist
 
@@ -171,7 +207,7 @@ jobs:
                 debug_args[$i]="target=template_debug"
               fi
             done
-            (cd godot && scons "${debug_args[@]}")
+            (cd godot && "$PYTHON" -m SCons "${debug_args[@]}")
             while IFS=$'\t' read -r source name; do
               debug_source=${source/template_release/template_debug}
               debug_name=${name/release/debug}
@@ -179,7 +215,7 @@ jobs:
             done < <(jq -r '.outputs | to_entries[] | "\(.key)\t\(.value)"' <<< "$TARGET_JSON")
           fi
 
-          files=$(cd dist && find . -maxdepth 1 -type f -printf '%f\n' | jq -Rn '[inputs]')
+          files=$(cd dist && ls -1 | jq -Rn '[inputs]')
           jq -n \
             --arg name "$TARGET_NAME" \
             --arg args "${args[*]}" \
