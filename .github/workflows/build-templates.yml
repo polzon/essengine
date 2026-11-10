@@ -130,6 +130,7 @@ jobs:
         shell: bash
         env:
           TARGET_JSON: ${{ toJSON(matrix.target) }}
+          TARGET_NAME: ${{ matrix.target.name }}
           COMMON_ARGS: ${{ needs.plan.outputs.common_args }}
           PLATFORM: ${{ matrix.target.platform }}
           ARCH: ${{ matrix.target.arch }}
@@ -158,7 +159,6 @@ jobs:
           (cd godot && scons "${args[@]}")
 
           mkdir -p dist
-          printf '%s\n' "${args[*]}" > dist/build-args.txt
 
           while IFS=$'\t' read -r source name; do
             cp "godot/bin/$source" "dist/$name"
@@ -178,6 +178,14 @@ jobs:
               cp "godot/bin/$debug_source" "dist/$debug_name"
             done < <(jq -r '.outputs | to_entries[] | "\(.key)\t\(.value)"' <<< "$TARGET_JSON")
           fi
+
+          files=$(cd dist && find . -maxdepth 1 -type f -printf '%f\n' | jq -Rn '[inputs]')
+          jq -n \
+            --arg name "$TARGET_NAME" \
+            --arg args "${args[*]}" \
+            --argjson files "$files" \
+            '{name: $name, args: $args, files: $files}' \
+            > "dist/$TARGET_NAME.target.json"
 
       - name: Upload templates
         uses: actions/upload-artifact@v7
@@ -212,7 +220,6 @@ jobs:
           ENGINE_COMMIT: ${{ github.sha }}
         run: |
           set -euo pipefail
-          rm -f release/*/build-args.txt
 
           profiles='{}'
           shopt -s nullglob
@@ -224,11 +231,12 @@ jobs:
           fi
 
           targets='{}'
-          for dir in release/templates-*; do
-            target=${dir#release/templates-}
-            args=$(cat "$dir/build-args.txt")
-            files=$(for f in "$dir"/*; do
-              printf '%s\t%s\n' "$(basename "$f")" "$(sha256sum "$f" | cut -d' ' -f1)"
+          while IFS= read -r meta; do
+            dir=$(dirname "$meta")
+            target=$(jq -r '.name' "$meta")
+            args=$(jq -r '.args' "$meta")
+            files=$(jq -r '.files[]' "$meta" | while IFS= read -r f; do
+              printf '%s\t%s\n' "$f" "$(sha256sum "$dir/$f" | cut -d' ' -f1)"
             done | jq -Rn '[inputs | split("\t") | {(.[0]): .[1]}] | add // {}')
             targets=$(jq -n \
               --argjson acc "$targets" \
@@ -236,7 +244,7 @@ jobs:
               --arg args "$args" \
               --argjson files "$files" \
               '$acc + {($name): {args: $args, files: $files}}')
-          done
+          done < <(find release -name '*.target.json' -type f)
 
           jq -n \
             --arg godot_tag "$GODOT_TAG" \
@@ -255,7 +263,7 @@ jobs:
             }' > manifest.json
 
           mkdir -p tpz
-          find release -type f -exec cp {} tpz/ \;
+          find release -type f ! -name '*.target.json' -exec cp {} tpz/ \;
           printf '%s\n' "$VERSION_STRING" > tpz/version.txt
           (cd tpz && zip -q -9 "../templates-${GODOT_TAG}.tpz" *)
 
@@ -268,7 +276,7 @@ jobs:
           set -euo pipefail
           short=$(git rev-parse --short=7 HEAD)
           tag="${GODOT_TAG}-${short}"
-          mapfile -t assets < <(find release -type f)
+          mapfile -t assets < <(find release -type f ! -name '*.target.json')
           gh release create "$tag" \
             --repo "$GITHUB_REPOSITORY" \
             --title "$tag" \
