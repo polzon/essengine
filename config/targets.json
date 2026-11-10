@@ -50,6 +50,18 @@
         "godot.windows.template_release.arm64.llvm.exe": "windows_release_arm64.exe",
         "godot.windows.template_release.arm64.llvm.console.exe": "windows_release_arm64_console.exe"
       }
+    },
+    {
+      "name": "web",
+      "runner": "ubuntu-24.04",
+      "container": "ghcr.io/polzon/essengine-builder-linux:main",
+      "platform": "web",
+      "arch": "",
+      "profile": "",
+      "args": "threads=no dlink_enabled=yes",
+      "outputs": {
+        "godot.web.template_release.wasm32.nothreads.dlink.zip": "web_dlink_nothreads_release.zip"
+      }
     }
   ]
 }

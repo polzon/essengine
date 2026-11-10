@@ -12,6 +12,14 @@ RUN dnf -y install --setopt=install_weak_deps=False \
 
 RUN dnf install -y wayland-devel && dnf clean all
 
+ENV EMSCRIPTEN_VERSION=6.0.12
+
+RUN dnf -y install --setopt=install_weak_deps=False libatomic && \
+    git clone --branch ${EMSCRIPTEN_VERSION} --progress https://github.com/emscripten-core/emsdk && \
+    emsdk/emsdk install ${EMSCRIPTEN_VERSION} && \
+    emsdk/emsdk activate ${EMSCRIPTEN_VERSION} && \
+    dnf clean all
+
 RUN set -eux; \
     for arch in x86_64 aarch64; do \
       name="${arch}-godot-linux-gnu_sdk-buildroot"; \

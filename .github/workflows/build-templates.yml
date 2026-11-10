@@ -142,7 +142,10 @@ jobs:
             read -r -a common <<< "$COMMON_ARGS"
             args+=("${common[@]}")
           fi
-          args+=("platform=$PLATFORM" "arch=$ARCH")
+          args+=("platform=$PLATFORM")
+          if [ -n "$ARCH" ]; then
+            args+=("arch=$ARCH")
+          fi
           args+=(
             "cache_path=${GITHUB_WORKSPACE}/.scons_cache"
             "redirect_build_objects=no"
@@ -168,6 +171,11 @@ jobs:
             esac
             export PATH="$sdk/bin:$PATH"
           fi
+          if [ "$PLATFORM" = "web" ]; then
+            set +u
+            source /root/emsdk/emsdk_env.sh
+            set -u
+          fi
 
           (cd godot && python3 -m SCons "${args[@]}")
 
@@ -187,6 +195,7 @@ jobs:
             (cd godot && python3 -m SCons "${debug_args[@]}")
             while IFS=$'\t' read -r source name; do
               debug_source=${source/template_release/template_debug}
+              debug_source=${debug_source/_release/_debug}
               debug_name=${name/release/debug}
               cp "godot/bin/$debug_source" "dist/$debug_name"
             done < <(jq -r '.outputs | to_entries[] | "\(.key)\t\(.value)"' <<< "$TARGET_JSON" | tr -d '\r')
