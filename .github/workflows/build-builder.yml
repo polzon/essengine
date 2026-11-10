@@ -61,3 +61,26 @@ jobs:
           image="ghcr.io/${{ github.repository_owner }}/essengine-builder-windows:main"
           docker build --progress=plain -f builder/Dockerfile.windows -t "$image" .
           docker push "$image"
+
+  android:
+    name: builder-android
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push
+        run: |
+          image="ghcr.io/${{ github.repository_owner }}/essengine-builder-android:main"
+          docker build --progress=plain -f builder/Dockerfile.android -t "$image" .
+          docker push "$image"
