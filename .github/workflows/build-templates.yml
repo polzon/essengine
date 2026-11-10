@@ -23,6 +23,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: read
 
 jobs:
   plan:
@@ -85,6 +86,11 @@ jobs:
     name: Build ${{ matrix.target.name }}
     needs: plan
     runs-on: ${{ matrix.target.runner }}
+    container:
+      image: ${{ matrix.target.container }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -96,55 +102,18 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Linux build dependencies
-        if: runner.os == 'Linux'
+      - name: Verify SCons
         shell: bash
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config python3-pip \
-            libx11-dev libxcursor-dev libxinerama-dev libxi-dev \
-            libxrandr-dev libgl1-mesa-dev libglu1-mesa-dev \
-            libasound2-dev libpulse-dev libudev-dev libfontconfig1-dev \
-            libwayland-bin libwayland-dev
+        run: python3 -m SCons --version
 
-      - name: Install Windows build dependencies
-        if: runner.os == 'Windows'
-        shell: bash
-        run: |
-          set -euo pipefail
-          d3d12=no
-          angle=no
-          accesskit=no
-          if (cd godot && python misc/scripts/install_d3d12_sdk_windows.py); then
-            d3d12=yes
-          fi
-          if (cd godot && python misc/scripts/install_angle.py); then
-            angle=yes
-          fi
-          if (cd godot && python misc/scripts/install_accesskit.py); then
-            accesskit=yes
-          fi
-          (cd godot && python misc/scripts/install_winrt.py) || true
-          {
-            echo "GODOT_D3D12=$d3d12"
-            echo "GODOT_ANGLE=$angle"
-            echo "GODOT_ACCESSKIT=$accesskit"
-          } >> "$GITHUB_ENV"
-
-      - name: Install SCons
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            python=python
-          else
-            python=python3
-          fi
-          echo "PYTHON=$python" >> "$GITHUB_ENV"
-          "$python" -m pip install --user "scons==4.10.1"
-          "$python" -m SCons --version
+      - name: Restore SCons cache
+        uses: actions/cache@v5
+        with:
+          path: .scons_cache
+          key: scons-${{ runner.os }}-${{ matrix.target.name }}-${{ needs.plan.outputs.godot_commit }}-${{ hashFiles('config/**', 'profiles/**', 'modules/**', 'patches/**') }}
+          restore-keys: |
+            scons-${{ runner.os }}-${{ matrix.target.name }}-${{ needs.plan.outputs.godot_commit }}-
+            scons-${{ runner.os }}-${{ matrix.target.name }}-
 
       - name: Apply patches
         shell: bash
@@ -174,6 +143,10 @@ jobs:
             args+=("${common[@]}")
           fi
           args+=("platform=$PLATFORM" "arch=$ARCH")
+          args+=(
+            "cache_path=${GITHUB_WORKSPACE}/.scons_cache"
+            "redirect_build_objects=no"
+          )
           if [ -n "${PROFILE:-}" ]; then
             args+=("build_profile=../profiles/$PROFILE")
           fi
@@ -184,21 +157,25 @@ jobs:
             read -r -a extra <<< "$EXTRA_ARGS"
             args+=("${extra[@]}")
           fi
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            args+=(
-              "d3d12=${GODOT_D3D12:-no}"
-              "angle=${GODOT_ANGLE:-no}"
-              "accesskit=${GODOT_ACCESSKIT:-no}"
-            )
+          if [ "$PLATFORM" = "linuxbsd" ]; then
+            case "$ARCH" in
+              x86_64) sdk=/root/x86_64-godot-linux-gnu_sdk-buildroot ;;
+              arm64) sdk=/root/aarch64-godot-linux-gnu_sdk-buildroot ;;
+              *)
+                echo "::error::No Linux SDK for $ARCH."
+                exit 1
+                ;;
+            esac
+            export PATH="$sdk/bin:$PATH"
           fi
 
-          (cd godot && "$PYTHON" -m SCons "${args[@]}")
+          (cd godot && python3 -m SCons "${args[@]}")
 
           mkdir -p dist
 
           while IFS=$'\t' read -r source name; do
             cp "godot/bin/$source" "dist/$name"
-          done < <(jq -r '.outputs | to_entries[] | "\(.key)\t\(.value)"' <<< "$TARGET_JSON")
+          done < <(jq -r '.outputs | to_entries[] | "\(.key)\t\(.value)"' <<< "$TARGET_JSON" | tr -d '\r')
 
           if [ "${DEBUG:-false}" = "true" ]; then
             debug_args=("${args[@]}")
@@ -207,15 +184,15 @@ jobs:
                 debug_args[$i]="target=template_debug"
               fi
             done
-            (cd godot && "$PYTHON" -m SCons "${debug_args[@]}")
+            (cd godot && python3 -m SCons "${debug_args[@]}")
             while IFS=$'\t' read -r source name; do
               debug_source=${source/template_release/template_debug}
               debug_name=${name/release/debug}
               cp "godot/bin/$debug_source" "dist/$debug_name"
-            done < <(jq -r '.outputs | to_entries[] | "\(.key)\t\(.value)"' <<< "$TARGET_JSON")
+            done < <(jq -r '.outputs | to_entries[] | "\(.key)\t\(.value)"' <<< "$TARGET_JSON" | tr -d '\r')
           fi
 
-          files=$(cd dist && ls -1 | jq -Rn '[inputs]')
+          files=$(cd dist && ls -1 | tr -d '\r' | jq -Rn '[inputs]')
           jq -n \
             --arg name "$TARGET_NAME" \
             --arg args "${args[*]}" \
@@ -271,7 +248,7 @@ jobs:
             dir=$(dirname "$meta")
             target=$(jq -r '.name' "$meta")
             args=$(jq -r '.args' "$meta")
-            files=$(jq -r '.files[]' "$meta" | while IFS= read -r f; do
+            files=$(jq -r '.files[]' "$meta" | tr -d '\r' | while IFS= read -r f; do
               printf '%s\t%s\n' "$f" "$(sha256sum "$dir/$f" | cut -d' ' -f1)"
             done | jq -Rn '[inputs | split("\t") | {(.[0]): .[1]}] | add // {}')
             targets=$(jq -n \
