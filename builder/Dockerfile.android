@@ -8,9 +8,13 @@ ENV ANDROID_NDK_ROOT=${ANDROID_SDK_ROOT}/ndk/${ANDROID_NDK_VERSION}
 
 RUN dnf -y install --setopt=install_weak_deps=False \
       bash binutils bzip2 curl file findutils gcc gcc-c++ gettext git \
-      java-17-openjdk-devel jq make nano ncurses-compat-libs patch \
-      pkgconfig python3-pip tar unzip which xz zip zstd && \
+      jq make nano patch pkgconfig python3-pip tar unzip which xz zip \
+      zstd && \
     pip install scons==4.10.1 && \
+    dnf clean all
+
+RUN dnf -y install adoptium-temurin-java-repository ncurses-compat-libs && \
+    dnf -y install --enablerepo=adoptium-temurin-java-repository temurin-17-jdk && \
     dnf clean all
 
 RUN set -eux; \
